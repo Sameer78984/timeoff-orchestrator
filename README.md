@@ -1,86 +1,302 @@
-# Time-Off Orchestrator Microservice
+<div align="center">
 
-A production-grade distributed microservice built with **NestJS**, **SQLite**, and **TypeORM** designed to proxy and seamlessly manage employee time-off requests. It maintains high localized API availability while enforcing strict eventual consistency against an external, potentially brittle Human Capital Management (HCM) System of Record.
+# ⚙️ Time-Off Orchestrator Microservice
 
----
+### **Enterprise-Grade Distributed Eventual Consistency Architecture**
 
-## 📄 Technical Architecture Documentation
-For a deep dive into the System state engines, failure mitigation paths (Circuit Breakers/Idempotency), and data synchronization constraints, please review the rigorous **[Technical Requirements Document (TRD)](./TRD.md)**.
+[![NestJS](https://img.shields.io/badge/NestJS-10+-E0234E?style=for-the-badge&logo=nestjs&logoColor=white)](https://nestjs.com/)
+[![Node.js](https://img.shields.io/badge/Node.js-20+-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+[![TypeORM](https://img.shields.io/badge/TypeORM-0.3+-FE0902?style=for-the-badge)](https://typeorm.io/)
 
----
+**A production-ready decoupled Microservice managing rigorous time-off invariants**
 
-## 🏗 System Architecture Synopsis
-- **Feature-Based Modularity:** Independent bounded domains (`Employee`, `Balance`, `TimeOff`, `Sync`, `HcmIntegration`) guarantee explicit dependency isolation.
-- **Transactional Outbox & Safe Relays:** Database writes to the local `TimeOffRequest` state leverage TypeORM Query-Runners acting within pessimistic SQL locks protecting concurrent users from dirty-reading limits.
-- **Eventual Consistency Cache:** A composite indexing on `Available` vs `Reserved` buffers guarantees sub-50ms user validations locally while deferring heavyweight processing asynchronously.
-
-## ⏱ TimeOffRequest State Machine (Manager Approval Flow)
-The request flow embraces an uncompromising sequence strictly gatekeeping API cascades against unapproved human states:
-1. `REQUESTED`: Initial request generated context.
-2. `PENDING_MANAGER_APPROVAL`: Balance strictly reserved locally with an active TTL lock. Pending supervisor OK.
-3. `PENDING_HCM_VALIDATION`: Supervisor approved; outbox runner asynchronously verifying against authoritative HCM.
-4. `APPROVED`: The ultimate terminus. HCM processed and validated the consumption safely.
-5. `REJECTED`: Local Manager organically denied OR HCM rejected the batch override. Safe rollbacks applied immediately.
-6. `EXPIRED`: Handled by the internal TTL cron job softly reaping requests that a manager ignored for >30 minutes to un-book locked allocations.
-
-## 🛡 Active Resilience Mechanics
-- **Robust Idempotency Protection**: A unique caching matrix guaranteeing duplicated network `Idempotency-Key` resubmissions immediately resolve without causing database state corruption on the ledger.
-- **Atomic Audit Trail Firing**: An independent fire-and-forget worker asynchronously mapping precise state change anomalies (`REQUEST_CREATED`, `EXPIRED`, `APPROVED`) decoupled from the primary HTTP transaction blocks.
+</div>
 
 ---
 
-## 🌐 API Endpoints
+## 📋 Table of Contents
 
-### 1. Manager & Employee Requests (Time-Off Domain)
-- `POST /time-off/request`
-  - **Purpose:** Submit an overlapping constraint sequence to generate a new record. 
-  - **Payload Requirement:** `{ "employeeId": "uuid", "locationId": "string", "startDate": "YYYY-MM-DD", "endDate": "YYYY-MM-DD" }`
-  - **Header Safety:** `Idempotency-Key` (Required)
-  
-- `PATCH /time-off/:id/approve`
-  - **Purpose:** Supervisor endpoint unlocking a request pushing it definitively to HCM ingestion phases.
-
-- `PATCH /time-off/:id/reject`
-  - **Purpose:** Immediate denial wiping the local `Reserved` day reservation cleanly allowing future requests to instantly succeed.
-
-- `GET /time-off/pending-approval`
-  - **Purpose:** Queue extraction listing all requests currently gated by the Manager constraint.
-
-### 2. Balance Authority
-- `GET /balance/:employeeId/:locationId`
-  - **Purpose:** Retrieve live cached telemetry isolating specific `Reserved (Inflight)` vs `Total (Authoritative)`.
-
-### 3. Sync Reconciliations
-- `POST /sync/:locationId`
-  - **Purpose:** Trigger forced explicit batch execution querying the monolithic HCM to wipe localized drift on an accelerated pipeline outside the nightly automated run bounds.
+- [🌟 Overview](#-overview)
+- [✨ Features](#-features)
+- [🏗️ Architecture](#️-architecture)
+- [📦 Project Structure](#-project-structure)
+- [🛠️ Tech Stack](#️-tech-stack)
+- [🚀 Getting Started](#-getting-started)
+- [📡 API Endpoints](#-api-endpoints)
+- [🛡️ Resilience & Security](#️-resilience--security)
+- [🗄️ Database Schema](#️-database-schema)
+- [🧪 Testing](#-testing)
+- [📖 Deep Architecture (TRD)](#-deep-architecture)
 
 ---
 
-## 💻 Setup & Execution
+## 🌟 Overview
 
-### Local Build Requirements
-- Node.js v18+
-- npm v9+
+The **Time-Off Orchestrator** is a highly-available, transactional microservice acting as a hyper-fast local proxy against monolithic Human Capital Management (HCM) frameworks. It implements rigorous concurrency control alongside the Outbox and Idempotency patterns to seamlessly absorb punishing external HCM downtime.
 
-### Quickstart Execution
-```bash
-# 1. Install localized dependencies ensuring no global collisions:
-npm install
+### **Key Characteristics**
 
-# 2. Boot the persistent engine locally forcing database sync sequences:
-npm run start:dev
+- ✅ **Eventual Consistency Focus** - Complete detachment from external HCM network latency
+- ✅ **Manager Gatekeeping** - Granular, discrete multi-stage approval pipelines
+- ✅ **Concurrency Hardened** - Pessimistic lock SQL transactional tracking on overlaps
+- ✅ **Robust Idempotency** - Strict cache constraints preventing double-spend API network overlaps
+- ✅ **Asynchronous Auditing** - Dedicated fire-and-forget anomaly and state auditing systems
+- ✅ **TTL Soft Expiry** - Automated CRON reapers tearing down stale locked capacities
 
-# 3. Assess the explicitly mapped Swagger Definitions testing endpoints natively:
-open http://localhost:3000/api/docs
+---
+
+## ✨ Features
+
+### **🔄 Event-Driven State Machine**
+- 6-Stage Request Lifecycle (`REQUESTED` -> `PENDING_MANAGER_APPROVAL` -> `PENDING_HCM_VALIDATION` -> `APPROVED` / `REJECTED`)
+- Soft-booking of reserved days mitigating overbooking limits prior to HCM clearance.
+- Transactional rollbacks releasing allocations securely.
+
+### **🛡️ Resiliency Operations**
+- **Idempotency Flow**: Validated `Idempotency-Key` tracking matrix for fault-tolerant retries.
+- **HCM Circuit Simulators**: Injection models designed to spoof heavy latency, failures, and fault timeouts proving queue strength.
+- **TTL Reaper**: Time-based memory leaks mitigated by an orchestrated Nest schedule tearing down aging `PENDING_MANAGER_APPROVAL` queries.
+
+### **📊 Auditing Operations**
+- Dedicated Auditing Domain capturing exact JSON payloads defining precise boundary triggers.
+- Isolated table space separating logging noise from intensive Balance constraint indexes.
+
+---
+
+## 🏗️ Architecture
+
+### **System Architecture**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                       HTTP REST CLIENTS                       │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
+│  │   Employee   │  │   Manager    │  │    Admins    │       │
+│  │   Dashboards │  │   Approvals  │  │   Sync Tools │       │
+│  └──────────────┘  └──────────────┘  └──────────────┘       │
+└─────────────────────────────────────────────────────────────┘
+                            ↕ HTTPS
+┌─────────────────────────────────────────────────────────────┐
+│                      API GATEWAY / NEST                     │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
+│  │  TimeOff     │  │  Balance     │  │  Idempotency │       │
+│  │  Controller  │  │  Controller  │  │  Validator   │       │
+│  └──────────────┘  └──────────────┘  └──────────────┘       │
+└─────────────────────────────────────────────────────────────┘
+                            ↕ In-Memory Locks / Eventual Consistency Sync
+┌─────────────────────────────────────────────────────────────┐
+│                      BUSINESS LOGIC LAYER                   │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
+│  │   TimeOff    │  │   HCM Sync   │  │   Audit      │       │
+│  │   Service    │  │   Service    │  │   Service    │       │
+│  └──────────────┘  └──────────────┘  └──────────────┘       │
+└─────────────────────────────────────────────────────────────┘
+                            ↕
+┌─────────────────────────────────────────────────────────────┐
+│                      DATA LAYER                             │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
+│  │   TypeORM    │  │   SQLite     │  │  HCM Vendor  │       │
+│  │   Query Runr │  │   Persistence│  │  (External)  │       │
+│  └──────────────┘  └──────────────┘  └──────────────┘       │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## 🧪 Testing Coverage Execution
-The localized test suite leverages deterministic jest assertions strictly ensuring that E2E API logic validates against the SQLite DI constructs heavily utilizing mock dependency overlaps. 
+---
+
+## 📦 Project Structure
+
+```
+src/
+├── audit/               # Anomaly & Event Logging
+├── balance/             # Pre-Calculated Local Cache Thresholds
+├── common/             
+├── config/              
+├── database/            # Connection configurations via TypeORM
+├── employee/            
+├── hcm-integration/     # Unstable 3rd-party vendor mock interface
+├── idempotency/         # Header fault-tolerance cache
+├── scheduler/           # Automated Cron TTL Reapers
+├── sync/                # Manual Batch HCM Ledger reconciling handlers
+├── time-off/            # Core state engine and concurrency locking
+└── app.module.ts 
+```
+
+---
+
+## 🛠️ Tech Stack
+
+| Technology | Version | Purpose |
+|:--------|:--------|:--------|
+| **NestJS** | 10.x | Primary Application Framework |
+| **TypeORM** | 0.3.x | Transactional ORM Abstraction |
+| **SQLite3** | 5.1.x | Embeddable disk-level Relational storage |
+| **Jest** | 29.x | Strict deterministic integration/E2E suites |
+| **Swagger** | 7.x | Auto-generated OpenAPI Contracts |
+| **Supertest** | 6.x | Network boundaries mock simulator |
+
+---
+
+## 🚀 Getting Started
+
+### **Prerequisites**
+
+- Node.js 20.x or higher
+- npm 9.x or higher
+
+### **Installation**
+
+1. **Clone the deployment**
+   ```bash
+   git clone https://github.com/Sameer78984/timeoff-orchestrator.git
+   cd timeoff-orchestrator
+   ```
+
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Start Development Engine**
+   *(Implicitly hooks into SQLite in-memory generation on reboot)*
+   ```bash
+   npm run start:dev
+   ```
+
+4. **Verify Boot Constraints**
+   - API Docs generated instantly at: `http://localhost:3000/api/docs`
+   - Database schemas synchronize natively on launch.
+
+---
+
+## 📡 API Endpoints
+
+### **Time-Off Submission Cycle**
+
+#### `POST /time-off/request`
+Allocates and reserves capacity locally if bounds do not overlap.
+
+**Headers:**
+- `Idempotency-Key` (Required)
+
+**Payload:**
+```json
+{
+  "employeeId": "emp-404",
+  "locationId": "loc-20",
+  "startDate": "2026-05-10T00:00:00Z",
+  "endDate": "2026-05-15T00:00:00Z"
+}
+```
+
+#### `GET /time-off/pending-approval`
+Examines all queries queued structurally waiting for Manager interventions.
+
+#### `PATCH /time-off/:id/approve`
+Manager authority explicitly green-lighting the transfer flow to trigger the Async HCM validation sequence to reach Finalized.
+
+#### `PATCH /time-off/:id/reject`
+Manager authority explicitly rejecting query and unwinding the local SQL constraint buffers seamlessly.
+
+---
+
+### **Balance Auditing**
+
+#### `GET /balance/:employeeId/:locationId`
+Polls localized split metric constraints explicitly breaking out reserved limitations.
+
+**Response:**
+```json
+{
+  "totalDays": 20,
+  "usedDays": 3,
+  "pendingDays": 5
+}
+```
+
+---
+
+### **Batch Integrations**
+
+#### `POST /sync/:locationId`
+Manually forcing an immediate HCM Sync reconciliation pipeline against a specific demographic territory.
+
+---
+
+## 🛡️ Resilience & Security
+
+### **Concurrency Lockdown Architecture**
+The TypeORM integration completely rejects arbitrary query saves in favor of `QueryRunner` atomic closures enforcing isolated transaction spans.
+
+### **Idempotency Guarantee**
+Double-submissions generated rapidly by impatient users during load are intercepted by the `Idempotency-Key` lookup index, yielding immediate 200 HTTP responses resolving the exact historically generated payload.
+
+### **Soft Expiration Lifecycle (Clean-ups)**
+Because the system "soft blocks" pending requests against the hard total limit, managers failing to respond to a queue leaves the request artificially throttling system capacities. The Cron Expiry task resolves this automatically at minute-1 boundaries.
+
+---
+
+## 🗄️ Database Schema
+
+```sql
+┌─────────────┐       ┌─────────────┐       ┌──────────────┐
+│  Employee   │       │   Balance   │       │ TimeOffReq   │
+├─────────────┤       ├─────────────┤       ├──────────────┤
+│ id (PK)     │       │ id (PK)     │       │ id (PK)      │
+│ name        │──────►│ employeeId  │◄──────│ employeeId   │
+│ department  │       │ locationId  │◄──────│ locationId   │
+└─────────────┘       │ totalDays   │       │ startDate    │
+                      │ usedDays    │       │ endDate      │
+                      │ pendingDays │       │ status       │
+                      └─────────────┘       └──────────────┘
+                                                    │
+                      ┌───────────────┐             │
+                      │   AuditLog    │             │
+                      ├───────────────┤             │
+                      │ id (PK)       │             │
+                      │ action        │◄────────────┘
+                      │ entityId      │
+                      │ payload (JSON)│
+                      └───────────────┘
+                                                
+┌─────────────────┐
+│ IdempotencyRec  │
+├─────────────────┤
+│ key (PK)        │
+│ payloadHash     │
+│ responseCache   │
+│ createdAt       │
+└─────────────────┘
+```
+
+---
+
+## 🧪 Testing
+
+The orchestration tests are rigidly mapped to E2E resilience constructs proving stability and dependency injection decoupling.
 
 ```bash
-# General Unit + Isolated Integration Bounds
+# Execute isolated and integration scopes
 npm run test
 
-# Full Coverage Output 
+# Execute with comprehensive coverage telemetry mappings
 npm run test -- --coverage
 ```
+
+---
+
+## 📖 Deep Architecture
+
+For advanced flow-mappings, specific queue reconciliation rules arrays, and logic constraints bridging the specific eventual consistency domain behaviors, review the attached explicit TRD Documentation: 
+
+👉 **[Technical Requirements Document (TRD)](./TRD.md)**
+
+---
+
+<div align="center">
+
+### **Built with ❤️ using NestJS and SQLite**
+
+[⬆ Back to Top](#️-time-off-orchestrator-microservice)
+
+</div>
