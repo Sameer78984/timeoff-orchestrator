@@ -229,7 +229,45 @@ The `ExpiryService` cron job runs every 60 seconds. It queries all `TimeOffReque
 
 ---
 
-## 8. Known Limitations
+## 8. Developer Experience & Quick Testing (Swagger UI)
+
+Swagger UI is available via `@nestjs/swagger` at:
+
+```
+http://localhost:3000/api/docs
+```
+
+It is the primary interface for quick evaluation, manual testing, and system validation. No external tooling is required.
+
+### 8.1 Reviewer Validation Flow
+
+Execute the following sequence in Swagger to exercise the full state machine:
+
+| Step | Action | Endpoint |
+|:-----|:-------|:---------|
+| 1 | Submit a time-off request | `POST /time-off/request` |
+| 2 | Approve the request as manager | `PATCH /time-off/{id}/approve` |
+| 3 | Submit a second request and reject it | `PATCH /time-off/{id}/reject` |
+| 4 | Inspect the employee's live balance | `GET /balance/{employeeId}/{locationId}` |
+| 5 | Force an HCM reconciliation | `POST /sync/{locationId}` |
+
+### 8.2 Required Header
+
+`POST /time-off/request` requires the `Idempotency-Key` header (any UUID string). Set it in the **Headers** section of the Swagger request form before executing. Omitting this header returns `400 Bad Request`.
+
+### 8.3 What Is Testable via Swagger
+
+- State machine transitions: full path from `PENDING_MANAGER_APPROVAL` → `APPROVED` and `REJECTED`.
+- Balance reservation and rollback: `pendingDays` increments on request creation and decrements on rejection.
+- HCM failure simulation: the mock HCM has a 20% random failure rate, producing observable `502` responses on `/approve`.
+- Idempotency caching: replaying a request with the same `Idempotency-Key` returns the archived response without re-executing any side effects.
+- Batch reconciliation: `POST /sync/{locationId}` overwrites `totalDays` / `usedDays` from the mock HCM.
+
+> The system is fully self-testable via Swagger without requiring Postman, scripts, or external tooling.
+
+---
+
+## 9. Known Limitations
 
 | Limitation | Impact | Mitigation |
 |:-----------|:-------|:-----------|

@@ -285,6 +285,44 @@ npm run test -- --coverage
 
 ---
 
+## 🧭 Developer Experience & Quick Testing (Swagger UI)
+
+Swagger UI is available via `@nestjs/swagger` at:
+
+```
+http://localhost:3000/api/docs
+```
+
+It is the primary interface for quick evaluation, manual exploratory testing, and system validation without requiring Postman, scripts, or external tooling.
+
+### **2-Minute Reviewer Flow**
+
+Execute the following sequence in Swagger to validate the full request lifecycle end-to-end:
+
+| Step | Action | Endpoint |
+|:-----|:-------|:---------|
+| 1 | Submit a time-off request | `POST /time-off/request` |
+| 2 | Approve the request as manager | `PATCH /time-off/{id}/approve` |
+| 3 | Submit a second request and reject it | `PATCH /time-off/{id}/reject` |
+| 4 | Inspect the employee's live balance | `GET /balance/{employeeId}/{locationId}` |
+| 5 | Force an HCM reconciliation | `POST /sync/{locationId}` |
+
+### **Required Header**
+
+`POST /time-off/request` requires the `Idempotency-Key` header (any UUID string). Set it in the **Headers** section of the Swagger request form before executing.
+
+### **What Is Testable via Swagger**
+
+- State machine transitions (`PENDING_MANAGER_APPROVAL` → `APPROVED` / `REJECTED` / `EXPIRED`)
+- Balance reservation and rollback on rejection
+- HCM success and failure simulation (the mock HCM has a 20% random failure rate)
+- Idempotency key caching (replay the same key to verify the cached response is returned)
+- Batch reconciliation against the mock HCM
+
+> The system is fully self-testable via Swagger without requiring Postman, scripts, or external tooling.
+
+---
+
 ## 📖 Deep Architecture
 
 For advanced flow-mappings, specific queue reconciliation rules arrays, and logic constraints bridging the specific eventual consistency domain behaviors, review the attached explicit TRD Documentation: 
