@@ -69,34 +69,36 @@ export class BalanceService {
     totalDays: number,
     usedDays: number,
   ): Promise<Balance> {
-    let balance = await this.balanceRepository.findOne({ where: { employeeId, locationId } });
+    return this.balanceRepository.manager.transaction(async (manager) => {
+      let balance = await manager.findOne(Balance, { where: { employeeId, locationId } });
 
-    if (balance) {
-      balance.totalDays = totalDays;
-      balance.usedDays = usedDays;
-      balance.lastSyncedAt = new Date();
+      if (balance) {
+        balance.totalDays = totalDays;
+        balance.usedDays = usedDays;
+        balance.lastSyncedAt = new Date();
 
-      // Clamp pendingDays if invariant violated after HCM overwrite
-      if (balance.usedDays + balance.pendingDays > balance.totalDays) {
-        const clamped = Math.max(0, balance.totalDays - balance.usedDays);
-        this.logger.warn(
-          `BALANCE_DRIFT_ALERT: employee=${employeeId} location=${locationId} ` +
-          `pendingDays clamped from ${balance.pendingDays} to ${clamped} ` +
-          `(totalDays=${totalDays}, usedDays=${usedDays})`,
-        );
-        balance.pendingDays = clamped;
+        // Clamp pendingDays if invariant violated after HCM overwrite
+        if (balance.usedDays + balance.pendingDays > balance.totalDays) {
+          const clamped = Math.max(0, balance.totalDays - balance.usedDays);
+          this.logger.warn(
+            `BALANCE_DRIFT_ALERT: employee=${employeeId} location=${locationId} ` +
+            `pendingDays clamped from ${balance.pendingDays} to ${clamped} ` +
+            `(totalDays=${totalDays}, usedDays=${usedDays})`,
+          );
+          balance.pendingDays = clamped;
+        }
+      } else {
+        balance = manager.create(Balance, {
+          employeeId,
+          locationId,
+          totalDays,
+          usedDays,
+          pendingDays: 0,
+          lastSyncedAt: new Date(),
+        });
       }
-    } else {
-      balance = this.balanceRepository.create({
-        employeeId,
-        locationId,
-        totalDays,
-        usedDays,
-        pendingDays: 0,
-        lastSyncedAt: new Date(),
-      });
-    }
 
-    return this.balanceRepository.save(balance);
+      return manager.save(balance);
+    });
   }
 }

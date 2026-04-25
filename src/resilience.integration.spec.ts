@@ -59,8 +59,8 @@ describe('Integration Tests', () => {
         .expect(200);
 
       expect(res.body.pendingDays).toBe(0);
-      // usedDays remains 0 — HCM-owned, only modified by sync
-      expect(res.body.usedDays).toBe(0);
+      // usedDays incremented by requestedDays (3 days: 2026-06-01 to 2026-06-03 inclusive)
+      expect(res.body.usedDays).toBe(3);
     });
   });
 

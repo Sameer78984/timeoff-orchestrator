@@ -20,11 +20,25 @@ describe('BalanceService', () => {
   });
 
   beforeEach(async () => {
+    // manager stub used inside the transaction callback
+    const txManager = {
+      findOne: jest.fn().mockResolvedValue(baseBalance()),
+      create: jest.fn().mockImplementation((_entity: any, data: any) => ({ ...data })),
+      save: jest.fn().mockImplementation((entity: any) => Promise.resolve(entity)),
+    };
+
     mockRepo = {
       findOne: jest.fn().mockResolvedValue(baseBalance()),
-      create: jest.fn().mockImplementation((data) => ({ ...data })),
-      save: jest.fn().mockImplementation((entity) => Promise.resolve(entity)),
+      create: jest.fn().mockImplementation((data: any) => ({ ...data })),
+      save: jest.fn().mockImplementation((entity: any) => Promise.resolve(entity)),
+      // Provide the manager.transaction shim so upsertFromHcm works
+      manager: {
+        transaction: jest.fn().mockImplementation((cb: (mgr: any) => Promise<any>) => cb(txManager)),
+      },
     };
+
+    // Expose txManager on mockRepo so individual tests can override its behaviour
+    (mockRepo as any).txManager = txManager;
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [

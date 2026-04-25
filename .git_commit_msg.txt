@@ -1,0 +1,34 @@
+fix: production remediation pass, align implementation with TRD
+
+time-off.service.ts:
+- CRITICAL: add usedDays += requestedDays on HCM 200 (APPROVED path)
+  Previously pendingDays was released but usedDays was never incremented,
+  violating TRD Table 5.1 and INV-02 under concurrent load.
+
+balance.service.ts:
+- Wrap upsertFromHcm in manager.transaction() for per-employee
+  transactional isolation during batch HCM sync (TRD section 6.2).
+
+scheduler/expiry.service.ts:
+- Wrap status-EXPIRED save + rejectPending in single atomic transaction.
+  Previously two separate saves could leave a request EXPIRED with
+  pendingDays still reserved on crash between them (TRD section 7.4).
+
+time-off.controller.ts:
+- Remove stale PENDING_HCM_VALIDATION and Outbox relay references from
+  Swagger ApiOperation and ApiResponse decorators.
+
+balance.service.spec.ts:
+- Add manager.transaction shim to mock repo so upsertFromHcm tests work
+  after the transactional wrapper was introduced.
+
+scheduler/expiry.service.spec.ts:
+- Add manager.transaction shim; update save/error assertions to match
+  the new atomic transaction path through txManager.
+
+resilience.integration.spec.ts:
+- Fix stale assertion: usedDays must equal requestedDays after approval,
+  not 0. The old comment (HCM-owned) matched the previous incorrect
+  implementation that never set usedDays locally.
+
+Result: 53/53 tests passing.

@@ -12,10 +12,22 @@ describe('ExpiryService', () => {
   let mockAuditService: any;
 
   beforeEach(async () => {
+    // txManager is used inside the manager.transaction callback
+    const txManager = {
+      save: jest.fn().mockImplementation((_entity: any, obj: any) => Promise.resolve(obj)),
+    };
+
     mockRepository = {
       find: jest.fn(),
       save: jest.fn(),
+      // shim so ExpiryService's manager.transaction(...) call resolves properly
+      manager: {
+        transaction: jest.fn().mockImplementation((cb: (mgr: any) => Promise<any>) => cb(txManager)),
+      },
     };
+
+    // Expose txManager so individual tests can override its behaviour
+    (mockRepository as any).txManager = txManager;
 
     mockBalanceService = {
       rejectPending: jest.fn(),
@@ -58,8 +70,9 @@ describe('ExpiryService', () => {
 
     await service.handlePendingExpiries();
 
+    const txManager = (mockRepository as any).txManager;
     expect(mockRequest.status).toBe(TimeOffStatus.EXPIRED);
-    expect(mockRepository.save).toHaveBeenCalledWith(mockRequest);
+    expect(txManager.save).toHaveBeenCalledWith(TimeOffRequest, mockRequest);
     expect(mockBalanceService.rejectPending).toHaveBeenCalledWith('emp-1', 'loc-1', 3);
     expect(mockAuditService.log).toHaveBeenCalled();
   });
@@ -94,7 +107,8 @@ describe('ExpiryService', () => {
     };
 
     mockRepository.find.mockResolvedValue([mockRequest]);
-    mockRepository.save.mockRejectedValue(new Error('DB failure'));
+    // Make the transaction itself throw to simulate a DB failure
+    mockRepository.manager.transaction.mockRejectedValue(new Error('DB failure'));
 
     await service.handlePendingExpiries();
 

@@ -63,20 +63,18 @@ A manager must explicitly call \`PATCH /time-off/{id}/approve\` or \`PATCH /time
   @ApiOperation({
     summary: 'Manager approves a request → triggers HCM validation',
     description: `
-Transitions status from \`PENDING_MANAGER_APPROVAL\` → \`PENDING_HCM_VALIDATION\`, then synchronously calls the HCM.
+Validates the request synchronously against HCM. No intermediate state is written before the HCM call completes.
 
-**Reviewer note:** This endpoint participates in the distributed consistency flow. It calls the external HCM mock which has a ~20% random failure rate — observe \`502\` responses to test the failure path.
-
-**On HCM success (200):** Status → \`APPROVED\`. \`pendingDays - requestedDays\`, \`usedDays + requestedDays\`.
-**On HCM rejection (400):** Status → \`REJECTED\`. \`pendingDays - requestedDays\` (immediate rollback).
-**On HCM fault (5xx/timeout):** Status stays \`PENDING_HCM_VALIDATION\`. Returns \`502\`. Retry via Outbox relay.
+**On HCM success (200):** Status → \`APPROVED\`. \`pendingDays - requestedDays\`, \`usedDays + requestedDays\`. Returns 200.
+**On HCM rejection (400):** Status → \`REJECTED\`. \`pendingDays - requestedDays\` (immediate rollback). Returns 200 with status=REJECTED.
+**On HCM fault (5xx/timeout):** No DB write. Status stays \`PENDING_MANAGER_APPROVAL\`. Returns \`502\`. Manager may retry.
     `,
   })
   @ApiParam({ name: 'id', description: 'The UUID of the TimeOffRequest returned from POST /time-off/request', example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
-  @ApiResponse({ status: 200, description: 'Request approved and finalised. Status = APPROVED. usedDays incremented, pendingDays decremented.' })
-  @ApiResponse({ status: 400, description: 'Request not in PENDING_MANAGER_APPROVAL state | HCM returned a policy violation (400).' })
+  @ApiResponse({ status: 200, description: 'HCM responded. Status = APPROVED or REJECTED. Balance mutations applied atomically.' })
+  @ApiResponse({ status: 400, description: 'Request not in PENDING_MANAGER_APPROVAL state (INVALID_STATE_TRANSITION).' })
   @ApiResponse({ status: 404, description: 'No TimeOffRequest found with the given ID.' })
-  @ApiResponse({ status: 502, description: 'HCM is unavailable (5xx or timeout). Request left in PENDING_HCM_VALIDATION. Outbox relay will retry up to 5 times with exponential backoff.' })
+  @ApiResponse({ status: 502, description: 'HCM is unavailable (5xx or timeout). No state change occurred. Safe to retry.' })
   async approveRequest(@Param('id') id: string) {
     return this.timeOffService.approveByManager(id);
   }

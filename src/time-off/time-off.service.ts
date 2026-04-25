@@ -166,7 +166,8 @@ export class TimeOffService {
       if (hcmResult) {
         freshRequest.status = TimeOffStatus.APPROVED;
         balance.pendingDays = Math.max(0, balance.pendingDays - requestedDays);
-        this.logger.log(`Request ${id}: APPROVED. pendingDays released.`);
+        balance.usedDays += requestedDays;
+        this.logger.log(`Request ${id}: APPROVED. pendingDays released and moved to usedDays.`);
       } else {
         freshRequest.status = TimeOffStatus.REJECTED;
         balance.pendingDays = Math.max(0, balance.pendingDays - requestedDays);

@@ -35,9 +35,13 @@ export class ExpiryService {
         try {
           const days = calculateDays(request.startDate, request.endDate);
 
-          request.status = TimeOffStatus.EXPIRED;
-          await this.timeOffRepository.save(request);
-          await this.balanceService.rejectPending(request.employeeId, request.locationId, days);
+          // Both writes must be atomic per TRD §7.4: status → EXPIRED + pendingDays rollback.
+          // If either write fails the record is left unchanged so the next cron cycle retries.
+          await this.timeOffRepository.manager.transaction(async (manager) => {
+            request.status = TimeOffStatus.EXPIRED;
+            await manager.save(TimeOffRequest, request);
+            await this.balanceService.rejectPending(request.employeeId, request.locationId, days);
+          });
 
           this.logger.log(`Expired request ${request.id}: released ${days} pendingDays`);
           this.auditService.log(AuditAction.REQUEST_EXPIRED, request.employeeId, request.id, {
