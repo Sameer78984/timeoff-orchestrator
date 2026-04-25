@@ -15,17 +15,18 @@ The service does **not** write to HCM. It reads from HCM during reconciliation a
 
 ## 2. System Invariants
 
-These rules hold at all times. Any operation that would violate them must be rejected with an appropriate error before the database write occurs.
+These rules hold at all times. All invariants are enforced at the service layer inside transaction boundaries before any database write. Any operation that would violate them must be rejected with an appropriate error before the database write occurs.
 
 | ID | Invariant |
 |:---|:----------|
 | **INV-01** | `Balance.pendingDays >= 0` at all times. |
 | **INV-02** | `Balance.usedDays + Balance.pendingDays <= Balance.totalDays` at all times. |
-| **INV-03** | Every state transition produces exactly one balance mutation. No transition may modify the balance more than once. |
+| **INV-03** | Each state transition maps to exactly one balance mutation executed inside a single transaction. No transition may trigger multiple mutations. |
 | **INV-04** | A `TimeOffRequest` must exist in exactly one state at any point in time. |
 | **INV-05** | Terminal states (`APPROVED`, `REJECTED`, `EXPIRED`) are immutable. No transition away from a terminal state is permitted. |
 | **INV-06** | No two non-terminal `TimeOffRequest` records for the same `employeeId` may have overlapping `[startDate, endDate]` ranges. |
 | **INV-07** | `idempotencyKey` replay returns the original response. It must not re-execute balance mutations, HCM calls, or state transitions. |
+| **INV-08** | `endDate` must be greater than or equal to `startDate`. |
 
 ---
 
@@ -69,7 +70,7 @@ These rules hold at all times. Any operation that would violate them must be rej
 - **Execution Sequence:**
   1. `HcmIntegrationService.validateTimeOff(employeeId, locationId, requestedDays)` is called synchronously without an open DB transaction.
   2. **On HCM `200 OK` (valid):** A single transaction opens. Status transitions to `APPROVED`. `Balance.pendingDays` decremented by `requestedDays`. `Balance.usedDays` incremented by `requestedDays`. Returns `200 OK`.
-  3. **On HCM `400` (policy violation):** A single transaction opens. Status transitions to `REJECTED`. `Balance.pendingDays` decremented by `requestedDays`. Returns `400 Bad Request`.
+  3. **On HCM `400` (policy violation):** A single transaction opens. Status transitions to `REJECTED`. `Balance.pendingDays` decremented by `requestedDays`. Return 200 OK with status = REJECTED.
   4. **On HCM `5xx` or network timeout:** No transaction is opened. The request remains at `PENDING_MANAGER_APPROVAL`. Returns `502 Bad Gateway`. The manager must click approve again later.
 - **Balance Note:** Balance mutation for the success path (step 2) and the HCM-rejection path (step 3) occurs immediately and synchronously. There is no deferred rollback.
 
@@ -166,7 +167,7 @@ When HCM rejects a request that already has `pendingDays` reserved:
 1. The rejection is confirmed via HCM `400` response synchronously during `PATCH /approve`.
 2. Balance rollback (`pendingDays - requestedDays`) occurs **immediately** in the same synchronous handler.
 3. The rollback and status update to `REJECTED` are executed in a single SQL transaction to guarantee atomicity (no partial state).
-4. No retry mechanisms or Outbox relays exist for balance mutations. It is strictly bounded by single synchronous transactions.
+4. No retry mechanisms exist for balance mutations. All outbound HCM calls are handled synchronously via HcmIntegrationService. It is strictly bounded by single synchronous transactions.
 
 ---
 
@@ -176,7 +177,7 @@ When HCM rejects a request that already has `pendingDays` reserved:
 HCM is the authoritative source for `totalDays` and `usedDays`. The local database is an eventual-consistency cache. Reads from `GET /balance` return local state, which may diverge from HCM by up to one reconciliation cycle.
 
 ### 6.2 Concurrency Control
-The `POST /time-off/request` handler uses a TypeORM `QueryRunner` to execute all validation reads and writes within a single serializable SQL transaction. This prevents two concurrent requests from both passing the balance check against the same `pendingDays` value. If two requests arrive simultaneously, one will acquire the transaction lock; the other will be queued behind it and evaluated against the already-mutated balance.
+The `POST /time-off/request` handler uses a TypeORM `QueryRunner` to execute all validation reads and writes. SQLite enforces write serialization via database-level locking. Correctness relies on application-level transaction boundaries, not isolation level guarantees. This prevents two concurrent requests from both passing the balance check against the same `pendingDays` value. If two requests arrive simultaneously, one will acquire the transaction lock; the other will be queued behind it and evaluated against the already-mutated balance.
 
 ### 6.3 Reconciliation Conflict Rule
 During `POST /sync/:locationId`, HCM data overwrites `totalDays` and `usedDays` only. `pendingDays` is never overwritten. If the overwrite causes `usedDays + pendingDays > totalDays`, the system clamps `pendingDays` to `totalDays - usedDays` and emits a `BALANCE_DRIFT_ALERT` log entry.
@@ -196,12 +197,16 @@ Idempotency guarantees **response consistency**, not repeated state transitions.
 | Repeated key, same payload hash | Return stored `responseBody` with `200 OK`. Zero side effects. |
 | Repeated key, different payload hash | Return `409 Conflict`. No processing occurs. |
 
+Idempotency records are persisted in the database and survive process restarts.
+
 ### 7.2 HCM Fault During Approval
 
 | Scenario | Immediate Outcome | Recovery |
 |:---------|:-----------------|:---------|
 | HCM `5xx` or timeout | Status stays `PENDING_MANAGER_APPROVAL`. Return `502`. | Manager clicks approve again later. No local state was changed. |
 | HCM `400` | Status set to `REJECTED`. `pendingDays` rolled back immediately. | No retry. Rejection is final. |
+
+Retrying PATCH /approve after HCM failure is safe because no local state mutation occurs before a successful HCM response.
 
 ### 7.3 Circuit Breaker
 
@@ -210,7 +215,7 @@ The circuit breaker is applied at the `HcmIntegrationService` adapter layer. It 
 | State | Condition | Behavior |
 |:------|:----------|:---------|
 | `CLOSED` | Default state. | All requests pass through to HCM normally. |
-| `CLOSED → OPEN` | Failure rate exceeds 20% within a rolling 60-second window. | Circuit opens. All HCM calls immediately return a local error without hitting the network. Outbox relay pauses. |
+| `CLOSED → OPEN` | Failure rate exceeds 20% within a rolling 60-second window. | Circuit opens. All HCM calls immediately return a local error without hitting the network. All outbound HCM calls are handled synchronously via HcmIntegrationService. |
 | `OPEN` | Circuit is open. | Incoming HCM calls are rejected immediately (no network call). The `PATCH /approve` endpoint returns `503 Service Unavailable`. |
 | `OPEN → HALF_OPEN` | 5-minute cooldown elapses after circuit opened. | Circuit allows exactly 1 probe request through. |
 | `HALF_OPEN → CLOSED` | Probe request returns `2xx`. | Circuit closes. Normal operation resumes. |
@@ -259,7 +264,7 @@ Execute the following sequence in Swagger to exercise the full state machine:
 - Idempotency caching: replaying a request with the same `Idempotency-Key` returns the archived response without re-executing any side effects.
 - Batch reconciliation: `POST /sync/{locationId}` overwrites `totalDays` / `usedDays` from the mock HCM.
 
-> The system is fully self-testable via Swagger without requiring Postman, scripts, or external tooling.
+> Core state machine and balance behavior are testable via Swagger. Advanced scenarios (idempotency conflict, circuit breaker transitions) require controlled inputs or automated tests.
 
 ---
 
