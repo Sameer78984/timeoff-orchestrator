@@ -145,7 +145,7 @@ src/
 - Node.js 20.x or higher
 - npm 9.x or higher
 
-### **Installation**
+### **Installation & Local Execution**
 
 1. **Clone the deployment**
    ```bash
@@ -158,13 +158,19 @@ src/
    npm install
    ```
 
-3. **Start Development Engine**
+3. **Start Development Server (Hot Reload)**
    *(Implicitly hooks into SQLite in-memory generation on reboot)*
    ```bash
    npm run start:dev
    ```
 
-4. **Verify Boot Constraints**
+4. **Start Production Server**
+   ```bash
+   npm run build
+   npm run start:prod
+   ```
+
+5. **Verify Boot Constraints**
    - API Docs generated instantly at: `http://localhost:3000/api/docs`
    - Database schemas synchronize natively on launch.
 
@@ -274,15 +280,33 @@ Because the system "soft blocks" pending requests against the hard total limit, 
 
 ## 🧪 Testing
 
-The orchestration tests are rigidly mapped to E2E resilience constructs proving stability and dependency injection decoupling.
+The orchestration tests are rigidly mapped to E2E resilience constructs proving stability and dependency injection decoupling. We maintain a strict >90% coverage requirement.
 
-```bash
-# Execute isolated and integration scopes
-npm run test
+### **Running the Test Suites**
 
-# Execute with comprehensive coverage telemetry mappings
-npm run test -- --coverage
-```
+1. **Unit & Integration Tests (Standard Run)**
+   Executes the core business logic, mocking external dependencies, and validates idempotency against an active SQLite matrix.
+   ```bash
+   npm run test
+   ```
+
+2. **Test Coverage Telemetry**
+   Generates a full statement, branch, and function coverage report.
+   ```bash
+   npm run test -- --coverage
+   ```
+
+3. **Watch Mode (TDD)**
+   Runs the test engine in watch mode for active development.
+   ```bash
+   npm run test:watch
+   ```
+
+4. **End-to-End (E2E) Network Simulation**
+   Runs complete application E2E tests against HTTP boundaries.
+   ```bash
+   npm run test:e2e
+   ```
 
 ---
 
