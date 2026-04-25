@@ -8,35 +8,38 @@ export class SyncService {
 
   constructor(
     private readonly hcmIntegrationService: HcmIntegrationService,
-    private readonly balanceService: BalanceService
+    private readonly balanceService: BalanceService,
   ) {}
 
+  /**
+   * POST /sync/:locationId
+   * Per-employee transactional sync. Pure overwrite of totalDays + usedDays.
+   * pendingDays clamped only if invariant violated.
+   */
   async reconcileBalances(locationId: string) {
     this.logger.log(`Starting balance reconciliation for location: ${locationId}`);
-    try {
-      const hcmBalances = await this.hcmIntegrationService.fetchBatchBalances(locationId);
-      
-      const syncResults = {
-        updated: 0,
-        failed: 0,
-      };
 
-      for (const hcmBalance of hcmBalances) {
-        try {
-          await this.balanceService.upsertFromHcm(hcmBalance.employeeId, locationId, hcmBalance.totalDays);
-          syncResults.updated++;
-        } catch (err) {
-          this.logger.error(`Failed to reconcile balance for employee ${hcmBalance.employeeId}: ${err.message}`);
-          syncResults.failed++;
-        }
+    const hcmBalances = await this.hcmIntegrationService.fetchBatchBalances(locationId);
+
+    const syncResults = { updated: 0, failed: 0 };
+
+    for (const hcmBalance of hcmBalances) {
+      try {
+        await this.balanceService.upsertFromHcm(
+          hcmBalance.employeeId,
+          locationId,
+          hcmBalance.totalDays,
+          hcmBalance.usedDays,
+        );
+        syncResults.updated++;
+        this.logger.log(`Synced employee=${hcmBalance.employeeId}: totalDays=${hcmBalance.totalDays}, usedDays=${hcmBalance.usedDays}`);
+      } catch (err) {
+        this.logger.error(`Failed to reconcile employee=${hcmBalance.employeeId}: ${err.message}`);
+        syncResults.failed++;
       }
-
-      this.logger.log(`Reconciliation complete. Updated: ${syncResults.updated}, Failed: ${syncResults.failed}`);
-      return syncResults;
-    } catch (err) {
-      this.logger.error(`Batch sync failed for location ${locationId}: ${err.message}`);
-      throw err;
     }
+
+    this.logger.log(`Reconciliation complete for location=${locationId}: updated=${syncResults.updated}, failed=${syncResults.failed}`);
+    return syncResults;
   }
 }
-
