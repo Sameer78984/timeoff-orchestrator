@@ -94,6 +94,10 @@ describe('TimeOffService', () => {
     return { mockQR };
   };
 
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   // --- Request Creation ---
 
   it('should return pending approvals', async () => {
@@ -107,6 +111,7 @@ describe('TimeOffService', () => {
     const result = await service.requestTimeOff({
       employeeId: 'emp-1', locationId: 'loc-1', startDate: '2026-05-01', endDate: '2026-05-05',
     });
+    jest.spyOn((service as any).logger, 'log').mockImplementation(() => {});
     expect(result.status).toBe(TimeOffStatus.PENDING_MANAGER_APPROVAL);
     expect(mockQR.commitTransaction).toHaveBeenCalled();
     expect(mockQR.manager.save).toHaveBeenCalled();
@@ -143,6 +148,7 @@ describe('TimeOffService', () => {
 
   it('should throw 502 and NOT change state when HCM throws', async () => {
     await setup();
+    jest.spyOn((service as any).logger, 'error').mockImplementation(() => {});
     (hcmIntegrationService.validateTimeOff as jest.Mock).mockRejectedValue(new Error('HCM down'));
     await expect(service.approveByManager('req-1')).rejects.toThrow(HttpException);
   });

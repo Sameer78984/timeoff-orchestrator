@@ -31,7 +31,12 @@ describe('SyncService', () => {
     service = module.get<SyncService>(SyncService);
   });
 
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it('calls upsertFromHcm once per employee in batch', async () => {
+    jest.spyOn((service as any).logger, 'log').mockImplementation(() => {});
     const result = await service.reconcileBalances('loc-1');
     expect(balanceService.upsertFromHcm).toHaveBeenCalledTimes(2);
     expect(balanceService.upsertFromHcm).toHaveBeenCalledWith('emp-1', 'loc-1', 20, 3);
@@ -40,6 +45,8 @@ describe('SyncService', () => {
   });
 
   it('handles partial failures without aborting batch', async () => {
+    jest.spyOn((service as any).logger, 'error').mockImplementation(() => {});
+    jest.spyOn((service as any).logger, 'log').mockImplementation(() => {});
     (balanceService.upsertFromHcm as jest.Mock)
       .mockResolvedValueOnce({})
       .mockRejectedValueOnce(new Error('DB error'));
@@ -49,6 +56,7 @@ describe('SyncService', () => {
   });
 
   it('handles empty HCM response gracefully', async () => {
+    jest.spyOn((service as any).logger, 'log').mockImplementation(() => {});
     (hcmService.fetchBatchBalances as jest.Mock).mockResolvedValue([]);
     const result = await service.reconcileBalances('loc-1');
     expect(result).toEqual({ updated: 0, failed: 0 });

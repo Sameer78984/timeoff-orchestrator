@@ -14,6 +14,10 @@ describe('HcmIntegrationService', () => {
     service.setErrorRate(0); // disable random failures for deterministic tests
   });
 
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it('validateTimeOff returns true when days <= 20', async () => {
     const result = await service.validateTimeOff('emp-1', 'loc-1', 10);
     expect(result).toBe(true);
@@ -25,6 +29,7 @@ describe('HcmIntegrationService', () => {
   });
 
   it('throws InternalServerError when error rate is 100%', async () => {
+    jest.spyOn((service as any).logger, 'error').mockImplementation(() => {});
     service.setErrorRate(1);
     await expect(service.validateTimeOff('emp-1', 'loc-1', 5)).rejects.toThrow(InternalServerErrorException);
   });
