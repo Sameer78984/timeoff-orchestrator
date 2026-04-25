@@ -62,17 +62,16 @@ These rules hold at all times. Any operation that would violate them must be rej
 ---
 
 #### `PATCH /time-off/:id/approve`
-- **Purpose:** Manager approves the request. Transitions status to `PENDING_HCM_VALIDATION`, then immediately calls the HCM. Resolves to `APPROVED` or `REJECTED` based on HCM response.
+- **Purpose:** Manager approves the request. The system validates against HCM synchronously, then resolves to `APPROVED` or `REJECTED`.
 - **Pre-Conditions:**
   1. Request with given `id` exists. If not → `404 Not Found`.
   2. Request status is `PENDING_MANAGER_APPROVAL`. If not → `400 Bad Request`.
 - **Execution Sequence:**
-  1. Status transitions to `PENDING_HCM_VALIDATION`. Written to DB.
-  2. `HcmIntegrationService.validateTimeOff(employeeId, locationId, requestedDays)` is called synchronously.
-  3. **On HCM `200 OK` (valid):** Status transitions to `APPROVED`. `Balance.pendingDays` decremented by `requestedDays`. `Balance.usedDays` incremented by `requestedDays`. Returns `200 OK`.
-  4. **On HCM `400` (policy violation):** Status transitions to `REJECTED`. `Balance.pendingDays` decremented by `requestedDays`. Returns `400 Bad Request`.
-  5. **On HCM `5xx` or network timeout:** Request remains at `PENDING_HCM_VALIDATION`. Returns `502 Bad Gateway`. Retry is delegated to the Outbox relay worker (see Section 6.2).
-- **Balance Note:** Balance mutation for the success path (step 3) and the HCM-rejection path (step 4) occurs immediately and synchronously. There is no deferred rollback for these two cases.
+  1. `HcmIntegrationService.validateTimeOff(employeeId, locationId, requestedDays)` is called synchronously without an open DB transaction.
+  2. **On HCM `200 OK` (valid):** A single transaction opens. Status transitions to `APPROVED`. `Balance.pendingDays` decremented by `requestedDays`. `Balance.usedDays` incremented by `requestedDays`. Returns `200 OK`.
+  3. **On HCM `400` (policy violation):** A single transaction opens. Status transitions to `REJECTED`. `Balance.pendingDays` decremented by `requestedDays`. Returns `400 Bad Request`.
+  4. **On HCM `5xx` or network timeout:** No transaction is opened. The request remains at `PENDING_MANAGER_APPROVAL`. Returns `502 Bad Gateway`. The manager must click approve again later.
+- **Balance Note:** Balance mutation for the success path (step 2) and the HCM-rejection path (step 3) occurs immediately and synchronously. There is no deferred rollback.
 
 ---
 
@@ -128,7 +127,6 @@ These rules hold at all times. Any operation that would violate them must be rej
 | State | Type | Description |
 |:------|:-----|:------------|
 | `PENDING_MANAGER_APPROVAL` | Active | Created. Balance reserved. Awaiting manager action. |
-| `PENDING_HCM_VALIDATION` | Active | Manager approved. HCM call in-flight or queued for retry. |
 | `APPROVED` | Terminal | HCM confirmed. Balance finalized (`usedDays` incremented). |
 | `REJECTED` | Terminal | Manager denied, or HCM denied. `pendingDays` released. |
 | `EXPIRED` | Terminal | TTL cron reaped the request after 30 minutes of inactivity. `pendingDays` released. |
@@ -138,11 +136,10 @@ These rules hold at all times. Any operation that would violate them must be rej
 | From | To | Trigger |
 |:-----|:---|:--------|
 | *(creation)* | `PENDING_MANAGER_APPROVAL` | `POST /time-off/request` success |
-| `PENDING_MANAGER_APPROVAL` | `PENDING_HCM_VALIDATION` | `PATCH /time-off/:id/approve` |
+| `PENDING_MANAGER_APPROVAL` | `APPROVED` | `PATCH /time-off/:id/approve` → HCM returns `200 OK` |
+| `PENDING_MANAGER_APPROVAL` | `REJECTED` | `PATCH /time-off/:id/approve` → HCM returns `400` |
 | `PENDING_MANAGER_APPROVAL` | `REJECTED` | `PATCH /time-off/:id/reject` |
 | `PENDING_MANAGER_APPROVAL` | `EXPIRED` | TTL cron job fires after 30-minute threshold |
-| `PENDING_HCM_VALIDATION` | `APPROVED` | HCM returns `200 OK` |
-| `PENDING_HCM_VALIDATION` | `REJECTED` | HCM returns `400` (policy violation) |
 
 ### 4.3 Invalid Transitions
 Any attempt to execute a transition not listed in 4.2 returns `400 Bad Request` with error code `INVALID_STATE_TRANSITION`. Terminal states (`APPROVED`, `REJECTED`, `EXPIRED`) accept no further transitions.
@@ -167,9 +164,9 @@ The strategy is: **Reserve BEFORE manager approval, with rollback on all rejecti
 
 When HCM rejects a request that already has `pendingDays` reserved:
 1. The rejection is confirmed via HCM `400` response synchronously during `PATCH /approve`.
-2. Balance rollback (`pendingDays - requestedDays`) occurs **immediately** in the same synchronous handler, not via a background worker.
+2. Balance rollback (`pendingDays - requestedDays`) occurs **immediately** in the same synchronous handler.
 3. The rollback and status update to `REJECTED` are executed in a single SQL transaction to guarantee atomicity (no partial state).
-4. No second rollback is triggered. The Outbox relay does not execute balance mutations; it only retries HCM network calls.
+4. No retry mechanisms or Outbox relays exist for balance mutations. It is strictly bounded by single synchronous transactions.
 
 ---
 
@@ -203,8 +200,7 @@ Idempotency guarantees **response consistency**, not repeated state transitions.
 
 | Scenario | Immediate Outcome | Recovery |
 |:---------|:-----------------|:---------|
-| HCM `5xx` or timeout | Status stays `PENDING_HCM_VALIDATION`. Return `502`. | Outbox relay retries with exponential backoff: 2s, 4s, 8s, 16s, 32s (max 5 attempts). |
-| All 5 retries exhausted | Status set to `REJECTED`. `pendingDays` rolled back. | Manual admin intervention required. Alert emitted. |
+| HCM `5xx` or timeout | Status stays `PENDING_MANAGER_APPROVAL`. Return `502`. | Manager clicks approve again later. No local state was changed. |
 | HCM `400` | Status set to `REJECTED`. `pendingDays` rolled back immediately. | No retry. Rejection is final. |
 
 ### 7.3 Circuit Breaker
@@ -273,4 +269,3 @@ Execute the following sequence in Swagger to exercise the full state machine:
 |:-----------|:-------|:-----------|
 | SQLite serializes concurrent writes | Throughput bottleneck under high write concurrency. | Acceptable for single-node deployment. Migration path to PostgreSQL is supported by TypeORM config change only. |
 | No real-time HCM webhook listener | Local state may diverge from HCM until next sync. | Mitigated by `POST /sync/:locationId` for manual reconciliation. |
-| `PENDING_HCM_VALIDATION` is not auto-retried on restart | After a service restart, orphaned `PENDING_HCM_VALIDATION` records are not automatically re-queued. | Acceptable temporary gap. Resolved by adding a startup bootstrap scan as a future enhancement. |

@@ -28,6 +28,7 @@
 - [🗄️ Database Schema](#️-database-schema)
 - [🧪 Testing](#-testing)
 - [📖 Deep Architecture (TRD)](#-deep-architecture)
+- [🧠 Architectural Decisions (ADR)](#-architectural-decisions)
 
 ---
 
@@ -49,7 +50,7 @@ The **Time-Off Orchestrator** is a highly-available, transactional microservice 
 ## ✨ Features
 
 ### **🔄 Event-Driven State Machine**
-- 6-Stage Request Lifecycle (`REQUESTED` -> `PENDING_MANAGER_APPROVAL` -> `PENDING_HCM_VALIDATION` -> `APPROVED` / `REJECTED`)
+- 4-Stage Request Lifecycle (`PENDING_MANAGER_APPROVAL` -> `APPROVED` / `REJECTED` / `EXPIRED`)
 - Soft-booking of reserved days mitigating overbooking limits prior to HCM clearance.
 - Transactional rollbacks releasing allocations securely.
 
@@ -328,6 +329,14 @@ Execute the following sequence in Swagger to validate the full request lifecycle
 For advanced flow-mappings, specific queue reconciliation rules arrays, and logic constraints bridging the specific eventual consistency domain behaviors, review the attached explicit TRD Documentation: 
 
 👉 **[Technical Requirements Document (TRD)](./TRD.md)**
+
+---
+
+## 🧠 Architectural Decisions
+
+For a comprehensive ledger of every technical choice, tool selection, and architectural trade-off made during development, review the Architecture Decision Record (ADR):
+
+👉 **[Architecture Decision Record (DECISION.md)](./DECISION.md)**
 
 ---
 
