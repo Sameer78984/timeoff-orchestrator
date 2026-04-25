@@ -7,6 +7,14 @@ import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 export class SyncController {
   constructor(private readonly syncService: SyncService) {}
 
+  /**
+   * Triggers an authoritative batch reconciliation from the HCM system.
+   * Intent: Align local state with external source of truth.
+   * Side Effects: Bulk updates Balance records for all employees at the location.
+   * 
+   * @param locationId Target location for synchronization.
+   * @returns Summary of processed records.
+   */
   @Post(':locationId')
   @ApiOperation({
     summary: 'Trigger batch HCM balance reconciliation for a location',

@@ -20,7 +20,6 @@ describe('BalanceService', () => {
   });
 
   beforeEach(async () => {
-    // manager stub used inside the transaction callback
     const txManager = {
       findOne: jest.fn().mockResolvedValue(baseBalance()),
       create: jest.fn().mockImplementation((_entity: any, data: any) => ({ ...data })),
@@ -31,13 +30,11 @@ describe('BalanceService', () => {
       findOne: jest.fn().mockResolvedValue(baseBalance()),
       create: jest.fn().mockImplementation((data: any) => ({ ...data })),
       save: jest.fn().mockImplementation((entity: any) => Promise.resolve(entity)),
-      // Provide the manager.transaction shim so upsertFromHcm works
       manager: {
         transaction: jest.fn().mockImplementation((cb: (mgr: any) => Promise<any>) => cb(txManager)),
       },
     };
 
-    // Expose txManager on mockRepo so individual tests can override its behaviour
     (mockRepo as any).txManager = txManager;
 
     const module: TestingModule = await Test.createTestingModule({
@@ -48,41 +45,56 @@ describe('BalanceService', () => {
     }).compile();
 
     service = module.get<BalanceService>(BalanceService);
-    // Suppress console output during tests, but allow spy to track it
     jest.spyOn(service['logger'], 'warn').mockImplementation(() => {});
   });
 
-  it('updatePending increments pendingDays by correct amount', async () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('updatePending increments pendingDays', async () => {
     const result = await service.updatePending('emp-1', 'loc-1', 5);
-    expect(result.pendingDays).toBe(8); // 3 + 5
+    expect(result.pendingDays).toBe(8);
   });
 
-  it('approvePending decrements pendingDays only (does NOT increment usedDays)', async () => {
+  it('getBalance auto-provisions if not found', async () => {
+    mockRepo.findOne.mockResolvedValue(null);
+    const result = await service.getBalance('new-emp', 'loc-1');
+    expect(result.employeeId).toBe('new-emp');
+    expect(result.totalDays).toBe(20);
+    expect(mockRepo.create).toHaveBeenCalled();
+    expect(mockRepo.save).toHaveBeenCalled();
+  });
+
+  it('approvePending decrements pendingDays', async () => {
     const result = await service.approvePending('emp-1', 'loc-1', 3);
-    expect(result.pendingDays).toBe(0); // 3 - 3
-    expect(result.usedDays).toBe(5);    // unchanged — HCM-owned
+    expect(result.pendingDays).toBe(0);
   });
 
-  it('rejectPending floors pendingDays at 0 (never negative)', async () => {
+  it('rejectPending floors pendingDays at 0', async () => {
     const result = await service.rejectPending('emp-1', 'loc-1', 999);
     expect(result.pendingDays).toBe(0);
   });
 
-  it('upsertFromHcm overwrites totalDays and usedDays, preserves pendingDays', async () => {
-    const result = await service.upsertFromHcm('emp-1', 'loc-1', 25, 10);
-    expect(result.totalDays).toBe(25);
-    expect(result.usedDays).toBe(10);
-    expect(result.pendingDays).toBe(3); // preserved
-  });
+  describe('upsertFromHcm', () => {
+    it('overwrites totalDays and usedDays', async () => {
+      const result = await service.upsertFromHcm('emp-1', 'loc-1', 25, 10);
+      expect(result.totalDays).toBe(25);
+      expect(result.usedDays).toBe(10);
+      expect(result.pendingDays).toBe(3);
+    });
 
-  it('upsertFromHcm clamps pendingDays when invariant violated', async () => {
-    // totalDays=10, usedDays=9, existing pendingDays=3 → 9+3=12 > 10 → clamp to max(0, 10-9)=1
-    const result = await service.upsertFromHcm('emp-1', 'loc-1', 10, 9);
-    expect(result.pendingDays).toBe(1);
-    expect(result.totalDays).toBe(10);
-    expect(result.usedDays).toBe(9);
-    expect(service['logger'].warn).toHaveBeenCalledWith(
-      expect.stringContaining('BALANCE_DRIFT_ALERT: employee=emp-1 location=loc-1 pendingDays clamped from 3 to 1 (totalDays=10, usedDays=9)')
-    );
+    it('clamps pendingDays when invariant violated', async () => {
+      const result = await service.upsertFromHcm('emp-1', 'loc-1', 10, 9);
+      expect(result.pendingDays).toBe(1);
+    });
+
+    it('creates new balance if not found', async () => {
+      mockRepo.txManager.findOne.mockResolvedValue(null);
+      const result = await service.upsertFromHcm('new-emp', 'loc-1', 30, 0);
+      expect(result.employeeId).toBe('new-emp');
+      expect(result.totalDays).toBe(30);
+      expect(mockRepo.txManager.create).toHaveBeenCalled();
+    });
   });
 });

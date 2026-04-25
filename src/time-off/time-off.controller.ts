@@ -12,6 +12,11 @@ export class TimeOffController {
     private readonly idempotencyService: IdempotencyService,
   ) {}
 
+  /**
+   * Submits a new time-off request with idempotency protection.
+   * Input: CreateTimeOffDto via body, Idempotency-Key via header.
+   * Intent: Initiate request flow and reserve pending days locally.
+   */
   @Post('request')
   @ApiOperation({
     summary: 'Submit a new time-off request',
@@ -49,6 +54,9 @@ A manager must explicitly call \`PATCH /time-off/{id}/approve\` or \`PATCH /time
     return response;
   }
 
+  /**
+   * Retrieves all requests currently awaiting manual manager review.
+   */
   @Get('pending-approval')
   @ApiOperation({
     summary: 'List all requests awaiting manager approval',
@@ -59,6 +67,10 @@ A manager must explicitly call \`PATCH /time-off/{id}/approve\` or \`PATCH /time
     return this.timeOffService.getPendingApprovals();
   }
 
+  /**
+   * Endpoint for managers to approve a request.
+   * Triggers synchronous HCM validation and final state transition.
+   */
   @Patch(':id/approve')
   @ApiOperation({
     summary: 'Manager approves a request → triggers HCM validation',
@@ -79,6 +91,10 @@ Validates the request synchronously against HCM. No intermediate state is writte
     return this.timeOffService.approveByManager(id);
   }
 
+  /**
+   * Endpoint for managers to manually reject a request.
+   * Performs an immediate local rollback of pending days.
+   */
   @Patch(':id/reject')
   @ApiOperation({
     summary: 'Manager rejects a request — no HCM call made',

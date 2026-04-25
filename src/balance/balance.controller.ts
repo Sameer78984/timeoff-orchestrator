@@ -1,4 +1,4 @@
-import { Controller, Get, Param } from '@nestjs/common';
+import { Controller, Get, Param, NotFoundException } from '@nestjs/common';
 import { BalanceService } from './balance.service';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 
@@ -7,6 +7,17 @@ import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 export class BalanceController {
   constructor(private readonly balanceService: BalanceService) {}
 
+  /**
+   * Retrieves the current balance for an employee at a specific location.
+   * 
+   * **Note:** If no record exists, the service will auto-provision one with 
+   * default values (20 total, 0 used, 0 pending).
+   * 
+   * @param employeeId Unique employee identifier.
+   * @param locationId Location identifier.
+   * @returns Current local balance snapshot.
+   * @throws NotFoundException if the balance could not be retrieved or provisioned.
+   */
   @Get(':employeeId/:locationId')
   @ApiOperation({
     summary: 'Get local cached balance for a given employee and location',
@@ -38,10 +49,14 @@ Returns the three-component balance snapshot stored locally.
     },
   })
   @ApiResponse({ status: 404, description: 'No balance record found for the given employeeId + locationId combination.' })
-  getBalance(
+  async getBalance(
     @Param('employeeId') employeeId: string,
     @Param('locationId') locationId: string,
   ) {
-    return this.balanceService.getBalance(employeeId, locationId);
+    const balance = await this.balanceService.getBalance(employeeId, locationId);
+    if (!balance) {
+      throw new NotFoundException(`Balance not found for employee ${employeeId} at location ${locationId}`);
+    }
+    return balance;
   }
 }

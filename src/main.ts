@@ -5,7 +5,7 @@ import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
-async function bootstrap() {
+export async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.useGlobalPipes(
@@ -78,4 +78,6 @@ Set it under the **Headers** section in the Swagger request form before executin
 
   await app.listen(process.env.PORT ?? 3000);
 }
-bootstrap();
+if (require.main === module) {
+  bootstrap();
+}

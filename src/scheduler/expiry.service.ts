@@ -19,13 +19,30 @@ export class ExpiryService {
     private readonly auditService: AuditService,
   ) {}
 
+  /**
+   * Background task that runs every minute to expire stale time-off requests.
+   * 
+   * **Business Rules:**
+   * - Only targets requests in PENDING_MANAGER_APPROVAL state.
+   * - TTL is currently 30 minutes from creation.
+   * 
+   * **Side Effects:**
+   * - Database: Updates status to EXPIRED.
+   * - Database: Rolls back `pendingDays` in the employee's Balance record.
+   * - Audit: Logs a REQUEST_EXPIRED event.
+   * 
+   * **Transaction Safety:**
+   * - Each request is processed within its own database transaction (ACID).
+   * - If a single request fails to expire, it is skipped and retried in the next cycle.
+   */
   @Cron(CronExpression.EVERY_MINUTE)
   async handlePendingExpiries() {
     this.logger.debug('Running soft reservation expiry job');
     const expiryThreshold = new Date();
+    // TRD §7.4: TTL is 30 minutes.
     expiryThreshold.setMinutes(expiryThreshold.getMinutes() - 30);
 
-    // Only expire PENDING_MANAGER_APPROVAL — the only active state
+    // Only expire PENDING_MANAGER_APPROVAL — the only active state holding reservations
     const pendingRequests = await this.timeOffRepository.find({
       where: { status: TimeOffStatus.PENDING_MANAGER_APPROVAL },
     });
@@ -49,6 +66,7 @@ export class ExpiryService {
             days,
           });
         } catch (error) {
+          // Log failure but continue processing other expired requests
           this.logger.error(`Failed to expire request ${request.id}: ${error.message}`);
         }
       }

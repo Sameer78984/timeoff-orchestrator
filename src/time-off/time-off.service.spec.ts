@@ -227,4 +227,27 @@ describe('TimeOffService', () => {
     await setup({ findOneResult: null });
     await expect(service.approveByManager('nonexistent')).rejects.toThrow(NotFoundException);
   });
+
+  it('should throw 404 when request does not exist during rejection', async () => {
+    const { mockQR } = await setup();
+    mockQR.manager.findOne.mockImplementation((entity) => {
+      if (entity === TimeOffRequest) return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+    await expect(service.rejectByManager('nonexistent')).rejects.toThrow(NotFoundException);
+  });
+
+  it('should auto-provision balance if not found during requestTimeOff', async () => {
+    const { mockQR } = await setup({ balance: null });
+    // First call inside TX for Balance returns null, second call for save
+    mockQR.manager.findOne.mockImplementation((entity) => {
+      if (entity === Balance) return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+    const result = await service.requestTimeOff({
+      employeeId: 'new-emp', locationId: 'loc-1', startDate: '2026-05-01', endDate: '2026-05-02',
+    });
+    expect(mockQR.manager.create).toHaveBeenCalledWith(Balance, expect.any(Object));
+    expect(result).toBeDefined();
+  });
 });

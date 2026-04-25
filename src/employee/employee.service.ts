@@ -11,11 +11,24 @@ export class EmployeeService {
     private employeeRepository: Repository<Employee>,
   ) {}
 
+  /**
+   * Creates a new employee record and persists it to the database.
+   * 
+   * @param createEmployeeDto DTO containing name and locationId.
+   * @returns The newly created Employee entity.
+   */
   async create(createEmployeeDto: CreateEmployeeDto): Promise<Employee> {
     const employee = this.employeeRepository.create(createEmployeeDto);
     return this.employeeRepository.save(employee);
   }
 
+  /**
+   * Retrieves a single employee by their UUID.
+   * 
+   * @param id Employee UUID.
+   * @returns Employee entity.
+   * @throws NotFoundException if the employee does not exist.
+   */
   async findOne(id: string): Promise<Employee> {
     const employee = await this.employeeRepository.findOne({ where: { id } });
     if (!employee) {
@@ -24,6 +37,11 @@ export class EmployeeService {
     return employee;
   }
 
+  /**
+   * Returns a list of all employees in the system.
+   * 
+   * @returns Array of Employee entities.
+   */
   async findAll(): Promise<Employee[]> {
     return this.employeeRepository.find();
   }

@@ -24,9 +24,24 @@ export class TimeOffService {
   ) {}
 
   /**
-   * POST /time-off/request
-   * ONE Bounded Transaction: validate overlap → validate balance → reserve pendingDays → create request.
-   * All reads and writes via queryRunner.manager.
+   * Submits a new time-off request and reserves pending days.
+   * 
+   * **Business Rules:**
+   * - Validates for overlapping active requests.
+   * - Validates sufficient balance (total - used - pending).
+   * - Automatically provisions a default balance if none exists.
+   * 
+   * **Side Effects:**
+   * - Database: Creates a TimeOffRequest in PENDING_MANAGER_APPROVAL state.
+   * - Database: Increments `pendingDays` in the employee's Balance record.
+   * - Audit: Logs a REQUEST_CREATED event.
+   * 
+   * **Transaction Safety:**
+   * - Execution is wrapped in a single database transaction (ACID).
+   * 
+   * @param createDto Request payload containing employeeId, locationId, and dates.
+   * @returns The newly created TimeOffRequest entity.
+   * @throws BadRequestException on overlap or insufficient balance.
    */
   async requestTimeOff(createDto: CreateTimeOffDto): Promise<TimeOffRequest> {
     const { employeeId, locationId, startDate, endDate } = createDto;
@@ -77,6 +92,7 @@ export class TimeOffService {
       }
 
       // 3. Reserve pendingDays
+      // Reserves the days by incrementing pendingDays count locally
       balance.pendingDays += requestedDays;
       await queryRunner.manager.save(balance);
 
@@ -109,7 +125,9 @@ export class TimeOffService {
   }
 
   /**
-   * GET /time-off/pending-approval
+   * Retrieves all time-off requests currently awaiting manager approval.
+   * 
+   * @returns Array of TimeOffRequest entities with status PENDING_MANAGER_APPROVAL.
    */
   async getPendingApprovals(): Promise<TimeOffRequest[]> {
     return this.timeOffRepository.find({
@@ -118,10 +136,28 @@ export class TimeOffService {
   }
 
   /**
-   * PATCH /time-off/:id/approve
-   * Step 1 (no TX): validate state + call HCM.
-   * Step 2 (one TX): re-read, guard state, apply outcome.
-   * If HCM throws → no DB mutation, return 502.
+   * Processes a manager approval for a time-off request.
+   * 
+   * **Workflow:**
+   * 1. Validates request existence and PENDING state.
+   * 2. Calls external HCM service to validate eligibility synchronously.
+   * 3. On HCM Success: Status → APPROVED, moves `pendingDays` to `usedDays`.
+   * 4. On HCM Rejection: Status → REJECTED, rolls back `pendingDays`.
+   * 
+   * **Side Effects:**
+   * - External: Calls HCM Integration Service.
+   * - Database: Updates TimeOffRequest and Balance records.
+   * - Audit: Logs APPROVED or REJECTED event.
+   * 
+   * **Transaction Safety:**
+   * - Step 2 (Outcome application) is wrapped in a transaction with re-reading of state
+   *   to prevent race conditions between HCM call and DB write.
+   * 
+   * @param id The UUID of the TimeOffRequest.
+   * @returns Updated TimeOffRequest entity.
+   * @throws NotFoundException if request or balance not found.
+   * @throws HttpException (502) if HCM call fails.
+   * @throws BadRequestException if request is in invalid state.
    */
   async approveByManager(id: string): Promise<TimeOffRequest> {
     // Step 1: Validate (no TX, no DB write)
@@ -165,11 +201,13 @@ export class TimeOffService {
 
       if (hcmResult) {
         freshRequest.status = TimeOffStatus.APPROVED;
+        // Atomically transfer days from pending to used
         balance.pendingDays = Math.max(0, balance.pendingDays - requestedDays);
         balance.usedDays += requestedDays;
         this.logger.log(`Request ${id}: APPROVED. pendingDays released and moved to usedDays.`);
       } else {
         freshRequest.status = TimeOffStatus.REJECTED;
+        // Rollback pending reservation
         balance.pendingDays = Math.max(0, balance.pendingDays - requestedDays);
         this.logger.log(`Request ${id}: REJECTED by HCM. pendingDays released.`);
       }
@@ -195,8 +233,22 @@ export class TimeOffService {
   }
 
   /**
-   * PATCH /time-off/:id/reject
-   * ONE Bounded Transaction: validate state → set REJECTED → release pendingDays.
+   * Processes a manager rejection for a time-off request.
+   * 
+   * **Business Rules:**
+   * - Immediately releases `pendingDays` reservation.
+   * - No HCM call is required for manual rejection.
+   * 
+   * **Side Effects:**
+   * - Database: Status → REJECTED, decrements `pendingDays`.
+   * - Audit: Logs REJECTED event.
+   * 
+   * **Transaction Safety:**
+   * - Execution is wrapped in a single database transaction.
+   * 
+   * @param id The UUID of the TimeOffRequest.
+   * @returns Updated TimeOffRequest entity.
+   * @throws NotFoundException if request or balance not found.
    */
   async rejectByManager(id: string): Promise<TimeOffRequest> {
     const queryRunner = this.dataSource.createQueryRunner();
@@ -217,6 +269,7 @@ export class TimeOffService {
         where: { employeeId: request.employeeId, locationId: request.locationId },
       });
       if (!balance) throw new NotFoundException('Balance not found');
+      // Release the pending reservation without incrementing usedDays
       balance.pendingDays = Math.max(0, balance.pendingDays - requestedDays);
 
       await queryRunner.manager.save(request);

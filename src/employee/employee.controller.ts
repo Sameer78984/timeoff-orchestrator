@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, NotFoundException } from '@nestjs/common';
 import { EmployeeService } from './employee.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
@@ -8,6 +8,12 @@ import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 export class EmployeeController {
   constructor(private readonly employeeService: EmployeeService) {}
 
+  /**
+   * Endpoint to create a new employee and their associated location tracking.
+   * 
+   * @param createEmployeeDto Name and location mapping.
+   * @returns Newly created employee object.
+   */
   @Post()
   @ApiOperation({
     summary: 'Create a new employee record',
@@ -31,6 +37,9 @@ Creates a new employee and provisions their initial balance record for the given
     return this.employeeService.create(createEmployeeDto);
   }
 
+  /**
+   * Retrieves a global list of all registered employees.
+   */
   @Get()
   @ApiOperation({
     summary: 'List all employees',
@@ -41,6 +50,12 @@ Creates a new employee and provisions their initial balance record for the given
     return this.employeeService.findAll();
   }
 
+  /**
+   * Fetches the detailed record for a specific employee.
+   * 
+   * @param id Employee UUID.
+   * @returns Employee entity.
+   */
   @Get(':id')
   @ApiOperation({
     summary: 'Get a single employee by ID',
@@ -49,7 +64,11 @@ Creates a new employee and provisions their initial balance record for the given
   @ApiParam({ name: 'id', description: 'The employee UUID returned from POST /employee', example: 'emp-001' })
   @ApiResponse({ status: 200, description: 'Employee record found.' })
   @ApiResponse({ status: 404, description: 'No employee found with the given ID.' })
-  findOne(@Param('id') id: string) {
-    return this.employeeService.findOne(id);
+  async findOne(@Param('id') id: string) {
+    const employee = await this.employeeService.findOne(id);
+    if (!employee) {
+      throw new NotFoundException(`Employee with ID ${id} not found`);
+    }
+    return employee;
   }
 }
